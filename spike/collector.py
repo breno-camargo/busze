@@ -34,7 +34,8 @@ import requests
 # Config
 # ──────────────────────────────────────────────────────────────────────────
 
-API_BASE = "http://api.olhovivo.sptrans.com.br/v2.1"
+# HTTPS obrigatório: a SPTrans desativou o acesso via HTTP em 01/02/2024.
+API_BASE = "https://api.olhovivo.sptrans.com.br/v2.1"
 
 # TODO(breno): preencher com os termos de busca das linhas do spike.
 # Use o rótulo público da linha (ex.: "8000", "477P", "6291"). Cada termo é
