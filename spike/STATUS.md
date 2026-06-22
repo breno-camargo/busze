@@ -1,4 +1,4 @@
-# Onde paramos — spike do motor de ETA (2026-06-17)
+# Onde paramos — spike do motor de ETA (2026-06-22)
 
 ## Contexto em 1 parágrafo
 SPTrans não tem GTFS-RT. O diferencial "Waze de ônibus" (segmentos coloridos por
@@ -34,17 +34,17 @@ segmento → projetar ETA → medir erro. Se não bater, repensa o produto. Isso
   preenchido (~45 m de espaçamento na 875A), `stop_times` presente por trip.
 - Token Olho Vivo cadastrado (app **BUSZE**, chave homologada no portal).
 
-## Bloqueado em 1 coisa (lado da SPTrans)
-- **Token retorna `false` no `/Login/Autenticar`** apesar de homologado no portal.
-  Chave correta e bem formada (64 hex, confere com o portal); a chamada está certa
-  (HTTP 200, body `false`). É **defasagem de propagação** entre o portal e o
-  backend de auth da API. Esperar (de horas até ~24h). Se passar disso, abrir
-  chamado no suporte ao desenvolvedor SPTrans.
-- Monitor de recheck a cada 30 min estava ativo nesta sessão (cron `1a26ea2b`,
-  some ao fechar o Claude). Pra retomar: mandar "verifique" numa nova sessão.
+## DESBLOQUEADO (2026-06-22): conta liberada, token autentica
+- **`/Login/Autenticar` retorna `true` (HTTP 200)** com o token do `.env`. A conta
+  foi habilitada pra API Olho Vivo — o bloqueio que segurava o spike acabou.
+- Histórico do bloqueio (resolvido): entre 17 e 18/06 o `Autenticar` retornava
+  `false` pra qualquer token (incl. um segundo app novo) → diagnóstico foi
+  **conta não habilitada**, não o token. Liberou em algum momento até 22/06.
+- Nota de chamada: o POST exige `Content-Length` (mandar body vazio, `-d ""`);
+  sem isso a API retorna **HTTP 411**. O coletor já usa `session.post`, ok.
 
 ## Retomar daqui
-1. **Quando o token virar `true`:** subir o coletor no servidor Windows via NSSM
+1. **Token já está `true`:** subir o coletor no servidor Windows via NSSM
    (ver README). Conferir nos logs do startup quais `cl`/sentidos cada termo
    (`875A`/`106A`/`2719`) resolveu.
 2. Deixar coletando ~2 semanas.
