@@ -43,12 +43,20 @@ segmento → projetar ETA → medir erro. Se não bater, repensa o produto. Isso
 - Nota de chamada: o POST exige `Content-Length` (mandar body vazio, `-d ""`);
   sem isso a API retorna **HTTP 411**. O coletor já usa `session.post`, ok.
 
+## COLETOR NO AR (2026-06-22)
+- Serviço **`OlhoVivoCollector`** instalado via NSSM em `C:\olhovivo-spike`
+  (Running, StartType Automatic → sobe no boot). Python 3.12 do python.org em
+  `.venv`. Token via `AppEnvironmentExtra`; logs em `logs\collector.log` (UTF-8 —
+  ler com `Get-Content -Encoding UTF8`, senão aparece mojibake no PS 5.1).
+- Linhas resolvidas no startup: 875A (cl 609/33377), 106A (cl 516/33284),
+  2719 (cl 932/33700) — ambos os sentidos cada.
+- Ciclos a cada 25s, 0 falhas. DB em `C:\olhovivo-spike\data\olhovivo.sqlite3`.
+- Manter o PC ligado ~2 semanas (sleep/hibernate desativados via `powercfg`).
+
 ## Retomar daqui
-1. **Token já está `true`:** subir o coletor no servidor Windows via NSSM
-   (ver README). Conferir nos logs do startup quais `cl`/sentidos cada termo
-   (`875A`/`106A`/`2719`) resolveu.
-2. Deixar coletando ~2 semanas.
-3. **Bloco A (pendente, ~1 sessão):** escrever o pipeline de análise (map-matching
+1. **Coletor já rodando desde 22/06.** Deixar coletando ~2 semanas; conferir
+   `logs\collector.log` de tempos em tempos (ciclos com 0 falhas).
+2. **Bloco A (pendente, ~1 sessão):** escrever o pipeline de análise (map-matching
    + velocidade por segmento + projeção de ETA + erro) com autoteste sintético.
    Pode ser construído antes dos dados; valida a lógica no servidor onde há Python.
 4. Rodar a análise sobre os dados reais → decidir go/no-go.
