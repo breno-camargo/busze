@@ -59,6 +59,10 @@ seria desligado). O caminho NSSM/Windows foi abandonado.
   — ambos os sentidos. Ciclos a cada 25s, 0 falhas, ~21 MB RAM.
 - Logs: `journalctl -u olhovivo -f`. Status: `systemctl status olhovivo`.
 - Unit versionado em `spike/olhovivo.service`.
+- **Watchdog**: `spike/healthcheck.sh` roda via cron (`/etc/cron.d/olhovivo-health`,
+  a cada 15 min, como root). Registra métricas em `~/olhovivo/logs/health.log` e
+  reinicia o serviço só se o loop travar (zero ciclos em 10 min — usa "ciclos",
+  não "posições novas", pra não dar falso positivo de madrugada).
 
 ## Retomar daqui
 1. **Coletor rodando no GCP desde 22/06.** Deixar coletando ~2 semanas; conferir
