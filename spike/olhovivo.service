@@ -1,0 +1,18 @@
+[Unit]
+Description=Olho Vivo position collector (bus-routes-sp spike)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=olhovivo
+WorkingDirectory=/home/olhovivo/olhovivo
+EnvironmentFile=/home/olhovivo/olhovivo/.env
+Environment=DB_PATH=/home/olhovivo/olhovivo/data/olhovivo.sqlite3
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/olhovivo/olhovivo/.venv/bin/python /home/olhovivo/olhovivo/collector.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

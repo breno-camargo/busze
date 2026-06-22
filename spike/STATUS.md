@@ -43,24 +43,32 @@ segmento → projetar ETA → medir erro. Se não bater, repensa o produto. Isso
 - Nota de chamada: o POST exige `Content-Length` (mandar body vazio, `-d ""`);
   sem isso a API retorna **HTTP 411**. O coletor já usa `session.post`, ok.
 
-## COLETOR NO AR (2026-06-22)
-- Serviço **`OlhoVivoCollector`** instalado via NSSM em `C:\olhovivo-spike`
-  (Running, StartType Automatic → sobe no boot). Python 3.12 do python.org em
-  `.venv`. Token via `AppEnvironmentExtra`; logs em `logs\collector.log` (UTF-8 —
-  ler com `Get-Content -Encoding UTF8`, senão aparece mojibake no PS 5.1).
-- Linhas resolvidas no startup: 875A (cl 609/33377), 106A (cl 516/33284),
-  2719 (cl 932/33700) — ambos os sentidos cada.
-- Ciclos a cada 25s, 0 falhas. DB em `C:\olhovivo-spike\data\olhovivo.sqlite3`.
-- Manter o PC ligado ~2 semanas (sleep/hibernate desativados via `powercfg`).
+## COLETOR NO AR — GCP (2026-06-22)
+A coleta migrou do PC do breno para uma **VM gratuita no Google Cloud** (o PC
+seria desligado). O caminho NSSM/Windows foi abandonado.
+
+- **VM**: GCP Compute Engine `e2-micro` (always-free), região `us-central1-a`,
+  Ubuntu 24.04, projeto `busze-500215`, instância `olhovivo`. IP externo
+  efêmero (pode mudar em stop/start — irrelevante, só fazemos saída).
+- **Acesso SSH**: usuário `olhovivo`, chave ed25519 em
+  `C:\Users\breno\.ssh\olhovivo_gcp` (sem passphrase, fica só no PC do breno).
+- **Serviço**: `olhovivo.service` (systemd, `Restart=always`, enabled → sobe no
+  boot). App em `~/olhovivo` (`.venv` + `requests`); `.env` com o token via
+  `EnvironmentFile`; `DB_PATH=~/olhovivo/data/olhovivo.sqlite3`.
+- Linhas resolvidas: 875A (cl 609/33377), 106A (cl 516/33284), 2719 (cl 932/33700)
+  — ambos os sentidos. Ciclos a cada 25s, 0 falhas, ~21 MB RAM.
+- Logs: `journalctl -u olhovivo -f`. Status: `systemctl status olhovivo`.
+- Unit versionado em `spike/olhovivo.service`.
 
 ## Retomar daqui
-1. **Coletor já rodando desde 22/06.** Deixar coletando ~2 semanas; conferir
-   `logs\collector.log` de tempos em tempos (ciclos com 0 falhas).
+1. **Coletor rodando no GCP desde 22/06.** Deixar coletando ~2 semanas; conferir
+   `journalctl -u olhovivo` de vez em quando (ciclos com 0 falhas).
+   Ao terminar: `scp` do `olhovivo.sqlite3` pra rodar a análise.
 2. **Bloco A (pendente, ~1 sessão):** escrever o pipeline de análise (map-matching
    + velocidade por segmento + projeção de ETA + erro) com autoteste sintético.
    Pode ser construído antes dos dados; valida a lógica no servidor onde há Python.
-4. Rodar a análise sobre os dados reais → decidir go/no-go.
-5. Se go: voltar ao design doc, completar Seções 2-6 pendentes, depois
+3. Rodar a análise sobre os dados reais → decidir go/no-go.
+4. Se go: voltar ao design doc, completar Seções 2-6 pendentes, depois
    `superpowers:writing-plans`.
 
 Design doc: `docs/superpowers/specs/2026-04-28-bus-routes-sp-design.md`
