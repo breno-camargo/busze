@@ -68,6 +68,14 @@ HTTP_TIMEOUT = 15  # seconds per request
 BACKOFF_MIN = 5
 BACKOFF_MAX = 120
 
+# Windows consoles/NSSM log files default to cp1252, which can't encode the
+# arrows/accents in our log lines and raises UnicodeEncodeError on emit (the
+# message is then dropped). Force UTF-8 on the streams before configuring logging.
+for _stream in (sys.stdout, sys.stderr):
+    reconfigure = getattr(_stream, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
