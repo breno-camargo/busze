@@ -1,8 +1,8 @@
 # Bus Routes SP — Design Document
 
-**Status:** WIP — brainstorm em andamento. Arquitetura apresentada (Seção 1). Faltam Seções 2-6 e aprovação final.
+**Status:** WIP — brainstorm em andamento. Seções 2-6 bloqueadas no go/no-go do spike.
 **Data:** 2026-04-28
-**Atualizado:** 2026-06-12 — validação de fontes de dados (ver Seção 0)
+**Atualizado:** 2026-06-22 — simplificação pré-validação (ver Seção 0.5)
 **Autor:** breno + Claude (sessão de brainstorm)
 
 ---
@@ -33,6 +33,31 @@ O **Moovit já tem desembarque/"hora de descer" em SP** (feature "Live Direction
 **Antes de `writing-plans`:** spike isolado de de-risking do motor de ETA (ver Seção 8, item 0). Se a projeção não bater contra a realidade, não há produto — descobrir isso em ~2 semanas de spike, não depois do monorepo/Docker/Cloudflare montados.
 
 Fontes: [Olho Vivo API docs](https://www.sptrans.com.br/desenvolvedores/api-do-olho-vivo-guia-de-referencia/documentacao-api/) · [Transitland f-6gy-sptrans](https://www.transit.land/feeds/f-6gy-sptrans) · [Moovit Get Off Alerts](https://support.moovitapp.com/hc/en-us/articles/211392929-Live-Directions-Get-Off-Alerts)
+
+---
+
+## 0.5 Revisão 2026-06-22 — simplificação pré-validação
+
+Ajustes após walkthrough: enxugar a infra antes do go/no-go e trocar o fosso visual
+(copiável) por um fosso de dados. Decisões:
+
+1. **Build em fases.** Pré-go: só o coletor (já rodando no GCP). No go, V1 MVP com o
+   mínimo de stack — itens abaixo. Não montar Postgres/OTP/Compose antes da validação.
+2. **SQLite + config no V1, Postgres adiado.** V1 não tem login nem PII; os únicos dados
+   persistentes (feature flags, cidades, paradas estáticas) cabem em SQLite/arquivos.
+   Posições e viagens ativas já vivem no Redis. Postgres entra quando houver multi-instância
+   ou audit pesado.
+3. **OTP fora do V1.** Substituído por um finder espacial caseiro sobre o GTFS ("quais linhas
+   passam perto de O e D no sentido certo", via índice espacial), focado em poucos corredores
+   curados. OTP (container Java, roteamento multimodal completo) é desproporcional; revisitar
+   só se transbordo multi-perna virar essencial.
+4. **Moat de dados desde o dia 1.** Persistir o histórico de velocidade por segmento (perfis
+   horário × dia-da-semana). O diferencial deixa de ser só o visual (copiável) e passa a ser
+   um modelo de trânsito de ônibus de SP que compõe com o tempo e é caro de replicar. Bônus:
+   alimenta o fallback histórico do motor de ETA (já no design do Bloco A).
+5. **Push "hora de descer" → V1.1 (fast-follow), não V1 core.** É table-stakes (Moovit já tem);
+   não deve atrasar o lançamento do núcleo (comparação + mapa colorido).
+6. **Seções 2-6 bloqueadas no go/no-go.** Não preencher no escuro antes do spike decidir.
 
 ---
 
@@ -68,9 +93,9 @@ Apps existentes (Cittamobi, Moovit, Google Maps) mostram posição e ETA até o 
 | Plataforma | PWA | Sem Mac, evita custo App Store, deploy instantâneo, cobre iOS+Android |
 | Frontend | Vite + React + PWA plugin | SPA + Service Worker, sem mágica do Next.js |
 | Backend | Fastify (Node + TypeScript) | TS unificado front/back via monorepo, ecossistema maduro |
-| DB | PostgreSQL | Feature flags, cidades, paradas estáticas, audit |
+| DB | **SQLite + config no V1** (Postgres só ao escalar) | V1 sem login/PII; dados estáticos cabem em SQLite/arquivos. Postgres entra com multi-instância/audit pesado (ver Seção 0.5) |
 | Cache + filas | Redis + BullMQ | Posições de ônibus, viagens ativas (TTL 2h), workers |
-| Roteamento | OpenTripPlanner self-hosted (Java, container) | Zero custo por requisição, ingere GTFS estático SPTrans. **Papel limitado: só descobre rotas candidatas A→B por tabela. NÃO é fonte de ETA realista (ver Seção 0.1).** |
+| Descoberta de rotas | **Finder espacial caseiro sobre GTFS** (não OTP no V1) | Para V1 (poucos corredores) basta achar linhas que passam perto de O e D no sentido certo via índice espacial. OTP é desproporcional; revisitar só se transbordo multi-perna virar essencial (ver Seção 0.5). **NÃO é fonte de ETA realista (ver Seção 0.1).** |
 | Motor de ETA realista | **Serviço caseiro** sobre `/Posicao` (map-matching + velocidade por segmento) | SPTrans não tem GTFS-RT; o diferencial Waze tem que ser construído. **Spike #1 de validação.** |
 | Hospedagem | VPS Hetzner + Docker Compose | ~€5/mês inicial; escala horizontal depois |
 | CDN/WAF | Cloudflare (free) | DDoS, picos, TLS borda |
@@ -82,10 +107,12 @@ Apps existentes (Cittamobi, Moovit, Google Maps) mostram posição e ETA até o 
 1. Digitar origem + destino → ver lista comparativa de rotas
 2. Tocar numa rota → ver detalhe com mapa colorido por trânsito + barra temporal
 3. Salvar locais frequentes ("Casa", "Trabalho") no localStorage
-4. **Push "hora de descer"** server-driven: usuário toca "Estou neste ônibus", servidor vigia posição e dispara push 2 paradas / 400m antes do destino
+
+(Push "hora de descer" saiu do core do V1 → V1.1 fast-follow, ver Seção 0.5.)
 
 ### Fora da V1 (V2+)
 
+- **(V1.1 — fast-follow, não V2)** Push "hora de descer" — table-stakes, sai logo após o núcleo (ver Seção 0.5)
 - Login / conta de usuário / sincronização entre dispositivos
 - Histórico de viagens
 - Compartilhar rota com terceiro
@@ -205,11 +232,14 @@ Pendente de design visual. Lógica fechada:
 └────────────────────────┘
 ```
 
+> **Rev. 0.5 (2026-06-22):** no V1 o bloco OTP é substituído por um finder espacial
+> caseiro sobre o GTFS, e o Postgres é adiado (SQLite + config). Ver Seção 0.5.
+
 ### Princípios
 
 - **API stateless** → escala horizontal trivial atrás de LB
 - **Worker centralizado de SPTrans** desde dia 1 — 1 chamada/intervalo serve todos os usuários, custo O(1) em vez de O(usuários ativos), respeita rate limit. **Esse worker também alimenta o motor de ETA caseiro** (Seção 0.1): além de cachear posições, computa velocidade por segmento.
-- **OTP isolado** em container interno, sem porta pública. **Faz só descoberta de rotas candidatas por horário de tabela** — o ETA realista/trânsito vem do motor caseiro, não do OTP.
+- **Descoberta de rotas via finder caseiro** (V1; OTP adiado, ver Seção 0.5): índice espacial sobre o GTFS acha linhas candidatas A→B por proximidade de O e D. O ETA realista/trânsito vem do motor caseiro, não do roteador.
 - **Redis como hub central** — cache, BullMQ e estado de viagens ativas
 - **Cloudflare na borda** — DDoS + CDN + abuso
 
@@ -243,11 +273,12 @@ Decisões que custam zero hoje e abrem caminho pra escala/monetização:
 
 - [x] Cloudflare na frente (free)
 - [x] Worker centralizado SPTrans (escala horizontal trivial depois)
-- [x] `city_id` em toda tabela do schema — pronto pra multi-cidade
-- [x] Tabela `feature_flags` — solta features pagas sem deploy
+- [x] **Histórico de velocidade por segmento persistido desde o dia 1** — moat de dados que compõe com o tempo (Seção 0.5)
 - [x] Telemetria desde o começo (Plausible self-host ou PostHog free)
 - [x] Slot pré-reservado de affiliate banner no UI
-- [x] Schema com `plan: free|premium` modelado, mesmo que V1 só tenha `free`
+- [ ] ~~`city_id` em toda tabela~~ — **adiado**: pressupõe Postgres. YAGNI até multi-cidade real (Seção 0.5)
+- [ ] ~~Tabela `feature_flags`~~ — **adiado**: começa como config/flag em arquivo; vira tabela com o Postgres (Seção 0.5)
+- [ ] ~~Schema com `plan: free|premium`~~ — **adiado** junto com o Postgres (Seção 0.5)
 
 ---
 
@@ -274,6 +305,9 @@ Decisões que custam zero hoje e abrem caminho pra escala/monetização:
 ---
 
 ## 8. Pendente de discutir e aprovar (pegamos aqui na próxima sessão)
+
+> **As Seções 2-6 estão BLOQUEADAS no go/no-go do spike (item 0) — não preencher no
+> escuro. O design de produto só avança guiado pelos dados do spike (ver Seção 0.5).**
 
 - [ ] **Item 0 — SPIKE DE VALIDAÇÃO DO MOTOR DE ETA (bloqueia todo o resto, ver Seção 0)**
   - Coletar `/Posicao` de 3-4 linhas por ~2 semanas
@@ -318,7 +352,7 @@ bus-routes-sp/
 ├── packages/
 │   └── shared-types/       # Zod schemas + TS types
 ├── infra/
-│   ├── docker-compose.yml  # api + postgres + redis + otp + caddy
+│   ├── docker-compose.yml  # V1: api + redis + caddy (postgres/otp adiados — Seção 0.5)
 │   ├── caddy/Caddyfile
 │   └── otp/                # configs do OpenTripPlanner
 ├── docs/
