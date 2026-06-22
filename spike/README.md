@@ -94,10 +94,14 @@ python collector.py
 ## Esquema do SQLite
 
 - `lines` — `cl` ↔ rótulo/sentido/terminais resolvidos no startup.
-- `positions` — uma linha por `(line_cl, vehicle, ts_vehicle)`. **Use esta** pra
-  análise; já está dedupada do ruído de cadência de polling.
-- `raw_polls` — JSON cru de cada resposta, pra re-análise se o schema parseado
-  faltar algo.
+- `positions` — uma linha por `(line_cl, vehicle, ts_vehicle)`, do `/Posicao`.
+  **Use esta** pra análise; já está dedupada do ruído de cadência de polling.
+- `predictions` — ETA-ao-ponto da própria SPTrans, do `/Previsao/Linha`: uma linha
+  por `(line_cl, stop_code, vehicle, ts_vehicle, predicted_arr)`. `predicted_arr`
+  é hora **local** (BRT) `HH:MM`; `ts_vehicle` é UTC. É o **baseline** que o ETA
+  caseiro precisa bater.
+- `raw_polls` — JSON cru de cada resposta (`kind` = `posicao`|`previsao`), pra
+  re-análise se o schema parseado faltar algo.
 
 ## Próximo passo (depois de ~2 semanas coletando)
 

@@ -57,6 +57,9 @@ seria desligado). O caminho NSSM/Windows foi abandonado.
   `EnvironmentFile`; `DB_PATH=~/olhovivo/data/olhovivo.sqlite3`.
 - Linhas resolvidas: 875A (cl 609/33377), 106A (cl 516/33284), 2719 (cl 932/33700)
   — ambos os sentidos. Ciclos a cada 25s, 0 falhas, ~21 MB RAM.
+- **Coleta `/Previsao/Linha` também (desde 22/06, ~16:13Z):** ETA-ao-ponto da
+  própria SPTrans → tabela `predictions`. É o baseline forte do Bloco A ("nosso
+  ETA bate o da SPTrans?"). 12 chamadas/ciclo (6 linhas × Posição+Previsão).
 - Logs: `journalctl -u olhovivo -f`. Status: `systemctl status olhovivo`.
 - Unit versionado em `spike/olhovivo.service`.
 - **Watchdog**: `spike/healthcheck.sh` roda via cron (`/etc/cron.d/olhovivo-health`,

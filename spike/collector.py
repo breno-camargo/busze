@@ -1,10 +1,11 @@
 """
 Olho Vivo position collector — ETA-engine de-risking spike.
 
-Goal: continuously poll SPTrans Olho Vivo /Posicao for a small set of bus
-lines and persist every reading to SQLite, so we can later run map-matching +
-per-segment speed analysis offline and measure projection error (go/no-go for
-the product's "Waze for buses" differentiator).
+Goal: continuously poll SPTrans Olho Vivo /Posicao AND /Previsao for a small set
+of bus lines and persist every reading to SQLite, so we can later run map-matching
++ per-segment speed analysis offline and measure projection error (go/no-go for
+the product's "Waze for buses" differentiator). /Previsao stores SPTrans's own
+ETA-to-stop per vehicle — the strong baseline our segment-speed ETA must beat.
 
 This is throwaway validation code. It optimizes for: never losing data, surviving
 SPTrans hiccups, and being trivial to restart. It is NOT the product.
@@ -126,15 +127,50 @@ def open_db(path: str) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS ix_positions_line_time
             ON positions (line_cl, ts_vehicle);
 
+        -- SPTrans's own ETA-to-stop, per stop per vehicle, from /Previsao/Linha.
+        -- This is the baseline our segment-speed ETA must beat: at poll time we
+        -- record "SPTrans predicts vehicle p reaches stop cp at HH:MM".
+        CREATE TABLE IF NOT EXISTS predictions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            line_cl       INTEGER NOT NULL,
+            stop_code     INTEGER,              -- cp: código da parada
+            stop_name     TEXT,                 -- np
+            stop_lat      REAL,                 -- py da parada
+            stop_lng      REAL,                 -- px da parada
+            vehicle       TEXT NOT NULL,        -- p: vehicle prefix
+            predicted_arr TEXT,                 -- t: HH:MM previsto pela SPTrans
+            ts_vehicle    TEXT,                 -- ta: vehicle GPS timestamp (UTC)
+            ts_collected  TEXT NOT NULL,        -- our poll wall-clock (UTC)
+            lat           REAL,                 -- py do veículo
+            lng           REAL                  -- px do veículo
+        );
+
+        -- Dedup identical predictions between polls: same vehicle GPS fix (ta)
+        -- yields the same ETA, so without this every poll re-inserts it and
+        -- bloats the table by polling cadence (mirrors uq_position).
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_prediction
+            ON predictions (line_cl, stop_code, vehicle, ts_vehicle, predicted_arr);
+
+        CREATE INDEX IF NOT EXISTS ix_predictions_line_time
+            ON predictions (line_cl, ts_vehicle);
+
         -- Raw responses kept verbatim for re-analysis. Throwaway spike: cheap insurance.
         CREATE TABLE IF NOT EXISTS raw_polls (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             line_cl       INTEGER NOT NULL,
             ts_collected  TEXT NOT NULL,
-            payload       TEXT NOT NULL
+            payload       TEXT NOT NULL,
+            kind          TEXT NOT NULL DEFAULT 'posicao'  -- 'posicao' | 'previsao'
         );
         """
     )
+    # Migração: DBs criados antes do /Previsao não têm raw_polls.kind. ALTER
+    # idempotente — adiciona só se faltar, sem tocar nas linhas existentes.
+    existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(raw_polls)")}
+    if "kind" not in existing_cols:
+        conn.execute(
+            "ALTER TABLE raw_polls ADD COLUMN kind TEXT NOT NULL DEFAULT 'posicao'"
+        )
     conn.commit()
     return conn
 
@@ -217,6 +253,11 @@ class OlhoVivo:
         resp = self._get("/Posicao/Linha", {"codigoLinha": cl})
         return resp.json()
 
+    def predictions(self, cl: int) -> dict:
+        """SPTrans's ETA-to-stop for every stop of the line, per vehicle."""
+        resp = self._get("/Previsao/Linha", {"codigoLinha": cl})
+        return resp.json()
+
 
 # ──────────────────────────────────────────────────────────────────────────
 # Collection loop
@@ -267,7 +308,7 @@ def resolve_lines(client: OlhoVivo, conn: sqlite3.Connection) -> list[Line]:
 def store_poll(conn: sqlite3.Connection, cl: int, payload: dict) -> int:
     collected = now_utc_iso()
     conn.execute(
-        "INSERT INTO raw_polls (line_cl, ts_collected, payload) VALUES (?, ?, ?)",
+        "INSERT INTO raw_polls (line_cl, ts_collected, payload, kind) VALUES (?, ?, ?, 'posicao')",
         (cl, collected, json.dumps(payload, separators=(",", ":"))),
     )
     inserted = 0
@@ -310,6 +351,56 @@ def store_poll(conn: sqlite3.Connection, cl: int, payload: dict) -> int:
     return inserted
 
 
+def store_predictions(conn: sqlite3.Connection, cl: int, payload: dict) -> int:
+    """Persist /Previsao/Linha: one row per (stop, vehicle) prediction."""
+    collected = now_utc_iso()
+    conn.execute(
+        "INSERT INTO raw_polls (line_cl, ts_collected, payload, kind) VALUES (?, ?, ?, 'previsao')",
+        (cl, collected, json.dumps(payload, separators=(",", ":"))),
+    )
+    inserted = 0
+    skipped_no_ts = 0
+    for stop in payload.get("ps", []):
+        for v in stop.get("vs", []):
+            ts_vehicle = v.get("ta")
+            if not ts_vehicle:
+                # Same rationale as positions: NULL ta breaks dedup and is useless
+                # for matching a prediction to a real arrival. Raw payload kept.
+                skipped_no_ts += 1
+                continue
+            try:
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO predictions
+                       (line_cl, stop_code, stop_name, stop_lat, stop_lng,
+                        vehicle, predicted_arr, ts_vehicle, ts_collected, lat, lng)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        cl,
+                        stop.get("cp"),
+                        stop.get("np"),
+                        stop.get("py"),
+                        stop.get("px"),
+                        str(v.get("p")),
+                        v.get("t"),
+                        ts_vehicle,
+                        collected,
+                        v.get("py"),
+                        v.get("px"),
+                    ),
+                )
+                inserted += cur.rowcount
+            except sqlite3.Error as exc:
+                log.error("falha ao inserir previsão: %s", exc)
+    if skipped_no_ts:
+        log.warning(
+            "linha cl=%s: %d previsão(ões) sem 'ta' ignoradas (só em raw_polls)",
+            cl,
+            skipped_no_ts,
+        )
+    conn.commit()
+    return inserted
+
+
 _running = True
 
 
@@ -335,14 +426,16 @@ def main() -> int:
     )
 
     backoff = BACKOFF_MIN
+    ops_per_cycle = len(lines) * 2  # /Posicao + /Previsao por linha
     while _running:
         cycle_start = time.monotonic()
         seen = 0
         new_rows = 0
+        pred_rows = 0
         failures = 0
-        # Poll each line independently: a single broken line (or one that the
+        # Poll each line/endpoint independently: a single broken call (or one the
         # API momentarily 500s on) must not abort the cycle and force healthy
-        # lines to be re-polled. Backoff only kicks in if the whole cycle fails,
+        # calls to be re-polled. Backoff only kicks in if the whole cycle fails,
         # which signals a systemic problem (network down, auth permanently lost).
         for line in lines:
             try:
@@ -351,21 +444,28 @@ def main() -> int:
                 seen += len(payload.get("vs", []))
             except (requests.RequestException, RuntimeError) as exc:
                 failures += 1
-                log.error("linha %s (cl=%s) falhou: %s", line.label, line.cl, exc)
+                log.error("posição %s (cl=%s) falhou: %s", line.label, line.cl, exc)
+            try:
+                pred_payload = client.predictions(line.cl)
+                pred_rows += store_predictions(conn, line.cl, pred_payload)
+            except (requests.RequestException, RuntimeError) as exc:
+                failures += 1
+                log.error("previsão %s (cl=%s) falhou: %s", line.label, line.cl, exc)
 
-        if failures == len(lines):
-            log.error("todas as linhas falharam — backoff %ds", backoff)
+        if failures == ops_per_cycle:
+            log.error("todas as chamadas falharam — backoff %ds", backoff)
             _sleep_interruptible(backoff)
             backoff = min(backoff * 2, BACKOFF_MAX)
             continue
 
         backoff = BACKOFF_MIN  # any success resets backoff
         log.info(
-            "ciclo ok — %d veículos vistos, %d posições novas, %d/%d linha(s) com falha",
+            "ciclo ok — %d veículos, %d posições novas, %d previsões novas, %d/%d chamadas com falha",
             seen,
             new_rows,
+            pred_rows,
             failures,
-            len(lines),
+            ops_per_cycle,
         )
         elapsed = time.monotonic() - cycle_start
         _sleep_interruptible(max(0.0, POLL_INTERVAL_SECONDS - elapsed))
