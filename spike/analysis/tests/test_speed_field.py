@@ -35,3 +35,15 @@ def test_speed_field_fallback_when_no_data():
     # segmento muito à frente, sem amostras -> free_flow
     assert field.speed(50000.0, runs[0].t_epoch[-1]) == 8.0
     assert field.last_was_fallback is True
+
+
+def test_speed_field_floors_zero_speed():
+    # ônibus parado: s constante -> amostras de velocidade 0. speed() não pode
+    # retornar 0 (causaria divisão por zero na projeção de ETA).
+    from analysis.trajectories import Run
+
+    t = np.arange(0, 200, 25, dtype=float) + 1_000_000.0
+    s = np.zeros_like(t)  # parado em s=0
+    run = Run("v1", t, s)
+    field = SpeedField.from_runs([run], segment_m=500.0, window_s=3600.0, free_flow=8.0)
+    assert field.speed(0.0, t[-1]) > 0.0

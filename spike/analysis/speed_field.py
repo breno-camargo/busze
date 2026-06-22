@@ -32,11 +32,18 @@ class SpeedField:
     segment_m: float
     window_s: float
     free_flow: float
+    min_speed: float = dc_field(default=0.3)  # piso ~1 km/h: ônibus parado != ETA infinito
     last_was_fallback: bool = dc_field(default=False)
 
     @classmethod
     def from_runs(
-        cls, runs: list[Run], *, segment_m: float, window_s: float, free_flow: float
+        cls,
+        runs: list[Run],
+        *,
+        segment_m: float,
+        window_s: float,
+        free_flow: float,
+        min_speed: float = 0.3,
     ) -> "SpeedField":
         frames = [fix_pair_speeds(r) for r in runs]
         samp = (
@@ -46,11 +53,13 @@ class SpeedField:
         )
         samp["seg"] = (samp["s_mid"] // segment_m).astype("int64") if len(samp) else []
         samp = samp.sort_values("t_mid").reset_index(drop=True)
-        return cls(samp, segment_m, window_s, free_flow)
+        return cls(samp, segment_m, window_s, free_flow, min_speed)
 
     def speed(self, s: float, t0_epoch: float) -> float:
         """Mediana das amostras do segmento de `s` na janela (t0-window, t0].
-        Fallback para free_flow quando não há amostra. Marca last_was_fallback."""
+        Fallback para free_flow quando não há amostra. Marca last_was_fallback.
+        Pisada em min_speed: ônibus parado vira velocidade de rastejo, não zero
+        (evita divisão por zero na projeção de ETA)."""
         seg = int(s // self.segment_m)
         m = self.samples
         sel = m[
@@ -62,4 +71,4 @@ class SpeedField:
             self.last_was_fallback = True
             return self.free_flow
         self.last_was_fallback = False
-        return float(sel["speed"].median())
+        return max(float(sel["speed"].median()), self.min_speed)
