@@ -67,14 +67,25 @@ seria desligado). O caminho NSSM/Windows foi abandonado.
   reinicia o serviço só se o loop travar (zero ciclos em 10 min — usa "ciclos",
   não "posições novas", pra não dar falso positivo de madrugada).
 
+## Bloco A CONSTRUÍDO (2026-06-22)
+Pipeline de análise/validação em `spike/analysis/` (Python, 24 testes verdes,
+autoteste sintético E2E). Spec: `docs/.../2026-06-22-bloco-a-analise-eta-design.md`;
+plano: `docs/.../plans/2026-06-22-bloco-a-analise-eta.md`. Como rodar:
+`spike/analysis/README.md`.
+- Smoke run em ~4h de dado real funcionou ponta a ponta (link casa, snap 0.0m).
+  Veredito preliminar NO-GO **não conta** — escassez de dados; esperar 2 semanas.
+- Achados a reusar: cl 609 ↔ GTFS `--direction 0`; GTFS usa `route_short_name`
+  com sufixo (`875A-10`), linker casa pela base. Demais cl resolver no checkpoint.
+
 ## Retomar daqui
-1. **Coletor rodando no GCP desde 22/06.** Deixar coletando ~2 semanas; conferir
-   `journalctl -u olhovivo` de vez em quando (ciclos com 0 falhas).
-   Ao terminar: `scp` do `olhovivo.sqlite3` pra rodar a análise.
-2. **Bloco A (pendente, ~1 sessão):** escrever o pipeline de análise (map-matching
-   + velocidade por segmento + projeção de ETA + erro) com autoteste sintético.
-   Pode ser construído antes dos dados; valida a lógica no servidor onde há Python.
-3. Rodar a análise sobre os dados reais → decidir go/no-go.
+1. **Coletor rodando no GCP desde 22/06** (coletando `/Posicao` + `/Previsao`).
+   Deixar ~2 semanas; conferir `journalctl -u olhovivo` de vez em quando.
+2. **Checkpoint (~25-26/06):** `scp` do `olhovivo.sqlite3` e rodar `analysis.run`
+   por cl/sentido. Validar densidade/snap; afinar `--segment-m`/`--window-min`;
+   resolver o mapeamento cl↔direction restante (ver `analysis/README.md`).
+3. **Estender baselines:** adicionar GTFS-schedule e `/Previsao` SPTrans ao
+   `evaluate`/`run` (hoje só velocidade constante) — o baseline forte do veredito.
+4. Rodar a análise no dataset completo (~06/07) → decidir go/no-go.
 4. Se go: voltar ao design doc, completar Seções 2-6 pendentes, depois
    `superpowers:writing-plans`.
 
